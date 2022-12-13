@@ -1,7 +1,7 @@
 //! Process management syscalls
 
 use crate::config::MAX_SYSCALL_NUM;
-use crate::task::{exit_current_and_run_next, suspend_current_and_run_next, TaskStatus};
+use crate::task::{munmap, mmap, exit_current_and_run_next, suspend_current_and_run_next, TaskStatus, translate_virtaddress_on_current_task, current_task_syscall_times,current_task_status,current_task_start_time };
 use crate::timer::get_time_us;
 
 #[repr(C)]
@@ -31,14 +31,16 @@ pub fn sys_yield() -> isize {
 }
 
 // YOUR JOB: 引入虚地址后重写 sys_get_time
-pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
-    let _us = get_time_us();
-    // unsafe {
-    //     *ts = TimeVal {
-    //         sec: us / 1_000_000,
-    //         usec: us % 1_000_000,
-    //     };
-    // }
+pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> isize {
+    let us = get_time_us();
+    let phyaddr = translate_virtaddress_on_current_task(ts as usize);
+    let ts = phyaddr as *mut TimeVal;
+    unsafe {
+        *ts = TimeVal {
+            sec: us / 1_000_000, 
+            usec: us % 1_000_000,
+        };
+    }
     0
 }
 
@@ -48,15 +50,24 @@ pub fn sys_set_priority(_prio: isize) -> isize {
 }
 
 // YOUR JOB: 扩展内核以实现 sys_mmap 和 sys_munmap
-pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
-    -1
+pub fn sys_mmap(start: usize, len: usize, port: usize) -> isize {
+    mmap(start, len, port)
 }
 
-pub fn sys_munmap(_start: usize, _len: usize) -> isize {
-    -1
+pub fn sys_munmap(start: usize, len: usize) -> isize {
+    munmap(start, len)
 }
 
 // YOUR JOB: 引入虚地址后重写 sys_task_info
 pub fn sys_task_info(ti: *mut TaskInfo) -> isize {
-    -1
+    let ti_phraddr = translate_virtaddress_on_current_task(ti as usize);
+    let ti = ti_phraddr as *mut TaskInfo;
+    unsafe {
+        *ti = TaskInfo{
+            status: current_task_status(),
+            syscall_times: current_task_syscall_times(),
+            time: (get_time_us() - current_task_start_time()) / 1_000,
+           };
+    }
+    0
 }

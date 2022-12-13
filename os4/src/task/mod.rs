@@ -17,6 +17,9 @@ mod task;
 use crate::loader::{get_app_data, get_num_app};
 use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
+use crate::config::MAX_SYSCALL_NUM;
+use crate::timer::get_time_us;
+
 use alloc::vec::Vec;
 use lazy_static::*;
 pub use switch::__switch;
@@ -79,6 +82,7 @@ impl TaskManager {
         let mut inner = self.inner.exclusive_access();
         let next_task = &mut inner.tasks[0];
         next_task.task_status = TaskStatus::Running;
+        next_task.start_time = get_time_us();
         let next_task_cx_ptr = &next_task.task_cx as *const TaskContext;
         drop(inner);
         let mut _unused = TaskContext::zero_init();
@@ -134,6 +138,9 @@ impl TaskManager {
             let mut inner = self.inner.exclusive_access();
             let current = inner.current_task;
             inner.tasks[next].task_status = TaskStatus::Running;
+            if inner.tasks[next].start_time == 0 {
+                inner.tasks[next].start_time = get_time_us();
+            } 
             inner.current_task = next;
             let current_task_cx_ptr = &mut inner.tasks[current].task_cx as *mut TaskContext;
             let next_task_cx_ptr = &inner.tasks[next].task_cx as *const TaskContext;
@@ -146,6 +153,55 @@ impl TaskManager {
         } else {
             panic!("All applications completed!");
         }
+    }
+    
+    fn translate_virtaddress_on_current_task(&self, v: usize) -> usize {
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].memory_set.translate_from_usize(v)
+    }
+
+    /// Get the status of current task
+    fn current_task_status(&self) -> TaskStatus {
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].task_status
+    }
+
+    /// Get the syscall_times of current task
+    fn current_task_syscall_times(&self) -> [u32; MAX_SYSCALL_NUM] {
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].syscall_times
+    }
+
+    /// Get the start_time of current task
+    fn current_task_start_time(&self) -> usize {
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].start_time
+    }
+
+  
+    fn increase_current_task_syscall_times(&self, syscall_id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].syscall_times[syscall_id] += 1;
+    }
+
+    fn mmap(&self, start: usize, len: usize, port: usize) -> isize {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        let ms = &mut inner.tasks[current].memory_set;
+        ms.mmap(start, len, port)
+    }
+    
+    
+    fn munmap(&self, start: usize, len: usize) -> isize {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        let ms = &mut inner.tasks[current].memory_set;
+        ms.munmap(start, len)
     }
 }
 
@@ -190,4 +246,36 @@ pub fn current_user_token() -> usize {
 /// Get the current 'Running' task's trap contexts.
 pub fn current_trap_cx() -> &'static mut TrapContext {
     TASK_MANAGER.get_current_trap_cx()
+}
+
+/// Translate virt address to phy address
+pub fn translate_virtaddress_on_current_task(v: usize) -> usize {
+    TASK_MANAGER.translate_virtaddress_on_current_task(v)
+}
+
+/// Get the status of current task
+pub fn current_task_status() -> TaskStatus {
+    TASK_MANAGER.current_task_status()
+ }
+
+/// Get the syscall_times of current task
+pub fn current_task_syscall_times() -> [u32; MAX_SYSCALL_NUM] {
+    TASK_MANAGER.current_task_syscall_times()
+}
+
+/// Get the start_time of current task
+pub fn current_task_start_time() -> usize {
+    TASK_MANAGER.current_task_start_time()
+}
+
+pub fn increase_current_task_syscall_times(syscall_id: usize) {
+    TASK_MANAGER.increase_current_task_syscall_times(syscall_id);
+}
+
+pub fn munmap(start: usize, len: usize) -> isize {
+    TASK_MANAGER.munmap(start, len)
+}
+
+pub fn mmap(start: usize, len: usize, port: usize) -> isize {
+    TASK_MANAGER.mmap(start, len, port)
 }
